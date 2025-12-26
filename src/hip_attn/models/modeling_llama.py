@@ -52,6 +52,8 @@ from transformers.utils import (
 
 from hip_attn.utils.attention import custom_attention
 
+from transformers.generation.utils import GenerationMixin
+
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
@@ -751,7 +753,9 @@ class LlamaCustomAttention(LlamaAttention):
         causal_mask = attention_mask
         # if attention_mask is not None and cache_position is not None:
         if attention_mask is not None:
-            causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
+            # causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
+            if causal_mask.dim() == 4:
+                causal_mask = causal_mask[:, :, :, : key_states.shape[-2]]
 
         sink_token = key_states[:, :, :4, :].clone()
         # if (self.layer_idx < 3) or (self.layer_idx > 20):
@@ -1864,7 +1868,7 @@ class LlamaModel(LlamaPreTrainedModel):
         return causal_mask
 
 
-class LlamaForCausalLM(LlamaPreTrainedModel):
+class LlamaForCausalLM(GenerationMixin, LlamaPreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
     def __init__(self, config):

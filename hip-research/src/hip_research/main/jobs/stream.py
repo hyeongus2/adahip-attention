@@ -27,12 +27,37 @@ class BatchedStreamer(TextStreamer):
 
 
 def job_stream(args, model, tokenizer, device):
-    from vllm import LLM, SamplingParams
-    from vllm.transformers_utils import config as vllm_transformers_config
+    # from vllm import LLM, SamplingParams
+    # from vllm.transformers_utils import config as vllm_transformers_config
 
-    vllm_transformers_config.FORCE_SIGNLE_LAYER = int(
-        os.environ.get("FORCE_SINGLE_LAYER", "0")
-    )
+    # vllm_transformers_config.FORCE_SIGNLE_LAYER = int(
+    #     os.environ.get("FORCE_SINGLE_LAYER", "0")
+    # )
+
+    # ============================================================
+    # [MODIFIED] vLLM is now OPTIONAL (and OFF by default).
+    # - Old code always imported vllm and crashed if not installed.
+    # - Even if installed, vLLM path can be too heavy for long prompts.
+    # - Enable vLLM only when STREAM_USE_VLLM=1.
+    # ============================================================
+    use_vllm = os.environ.get("STREAM_USE_VLLM", "0") == "1"
+    LLM = None
+    SamplingParams = None
+
+    if use_vllm:
+        try:
+            from vllm import LLM as _LLM, SamplingParams as _SamplingParams
+            from vllm.transformers_utils import config as vllm_transformers_config
+
+            LLM = _LLM
+            SamplingParams = _SamplingParams
+
+            vllm_transformers_config.FORCE_SIGNLE_LAYER = int(
+                os.environ.get("FORCE_SINGLE_LAYER", "0")
+            )
+        except Exception:
+            # [MODIFIED] If vLLM import fails, fall back to HF streamer path.
+            use_vllm = False
 
     while True:
         get_bench().reset_trace()
@@ -62,6 +87,26 @@ def job_stream(args, model, tokenizer, device):
         print("input_ids", len(input_text), inputs.input_ids.shape)
         # print(inputs)
 
+        # ============================================================
+        # [MODIFIED] Optional input-token cap for stability.
+        #   - Set STREAM_MAX_INPUT_TOKENS (e.g., 8192) to keep memory sane.
+        #   - This caps from the RIGHT (keeps the most recent context).
+        # ============================================================
+        cap = int(os.environ.get("STREAM_MAX_INPUT_TOKENS", "0"))
+        if cap > 0 and inputs["input_ids"].shape[-1] > cap:
+            inputs["input_ids"] = inputs["input_ids"][:, -cap:]
+            if "attention_mask" in inputs:
+                inputs["attention_mask"] = inputs["attention_mask"][:, -cap:]
+            print(
+                "input_ids (capped)",
+                len(input_text),
+                inputs.input_ids.shape,
+                "cap=",
+                cap,
+            )
+        else:
+            print("input_ids", len(input_text), inputs.input_ids.shape)
+
         t = time.time()
         elapsed = 0
         try:
@@ -69,7 +114,12 @@ def job_stream(args, model, tokenizer, device):
                 output_texts = [
                     model.generate(input_text=input_text, max_tokens=args.max_tokens)
                 ]
-            elif isinstance(model, LLM):
+
+            # elif isinstance(model, LLM):
+            # ============================================================
+            # [MODIFIED] vLLM branch is gated by `use_vllm`.
+            # ============================================================
+            elif use_vllm and LLM is not None and isinstance(model, LLM):
                 prompts = [
                     input_text,
                 ]
@@ -174,7 +224,7 @@ def job_stream(args, model, tokenizer, device):
                             # print(output_tokens[-1], )
                 else:
                     streamer = BatchedStreamer(
-                        tokenizer, skip_prompt=False, skip_special_tokens=False
+                        tokenizer, skip_prompt=True, skip_special_tokens=False
                     )
 
                     with torch.no_grad():
@@ -182,7 +232,11 @@ def job_stream(args, model, tokenizer, device):
                             **inputs,
                             streamer=streamer,
                             do_sample=True,
-                            max_new_tokens=256,
+                            # max_new_tokens=256,
+                            # ============================================================
+                            # [MODIFIED] Use args.max_tokens (was hardcoded 256).
+                            # ============================================================
+                            max_new_tokens=args.max_tokens,
                             temperature=0.7,
                             top_p=0.9,
                             top_k=10,

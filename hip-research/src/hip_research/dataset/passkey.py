@@ -111,9 +111,10 @@ def gen_text():
         # prompt_lens = [2000, 4000, 8000, 16000, 32000]
         # prompt_lens = [16000, 32000, 64000, 128000]
         # prompt_lens = [2000, 4000, 8000, 16000, 32000, 64000, 128000]
-        prompt_lens = [128000, 64000, 32000, 16000, 8000, 4000]
+        # prompt_lens = [128000, 64000, 32000, 16000, 8000, 4000]
         # prompt_lens = [32000]
         # prompt_lens.reverse()
+        prompt_lens = [4000, 8000, 16000]
 
     for l in prompt_lens:
         n_fillers = (l - prefix_len - query_len) // filler_len + 1

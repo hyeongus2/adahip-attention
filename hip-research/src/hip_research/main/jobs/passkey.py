@@ -4,7 +4,14 @@ import torch
 from hip_research.dataset.passkey import Passkey
 from hip_research.models.sglang_model import SglangModel
 from tqdm import tqdm
-from vllm import LLM, SamplingParams
+
+import warnings
+try:
+    from vllm import LLM, SamplingParams
+except ModuleNotFoundError:
+    LLM = torch.Tensor  # sentinel type for isinstance checks
+    SamplingParams = None
+    warnings.warn("vllm is not installed. passkey job will not support vLLM backend.")
 
 
 def get_numbers(s, cnt):
@@ -59,24 +66,101 @@ def job_passkey(args, model, tokenizer, device):
             else:
                 output = [model.generate(input_text=input_text, max_tokens=20)]
         else:
-            input_ids = input_ids.cuda()
-            target_ids = target_ids.cuda()
+            # input_ids = input_ids.cuda()
+            # target_ids = target_ids.cuda()
 
+            # with torch.no_grad(), torch.autocast("cuda", torch.bfloat16):
+            #     output = model.generate(
+            #         input_ids,
+            #         max_new_tokens=20,
+            #         min_new_tokens=5,
+            #         do_sample=False,
+            #         num_beams=1,
+            #         attention_mask=None,
+            #         # pad_token_id=tokenizer.eos_token_id,
+            #     )
+            #     for m in model.modules():
+            #         if hasattr(m, "_clean_cache"):
+            #             m._clean_cache()
+            #     output = output[:, input_ids.shape[1] :]
+            #     tqdm.write(f"{tokenizer.batch_decode(output)}")
+
+
+# ============================================================
+            # [FINAL FIX] Align to Head Dimension (128)
+            # 이유: Llama-3 Head Dim이 128이므로, view() 연산 시 
+            # 전체 토큰 수가 128의 배수여야 함.
+            # ============================================================
+            input_ids = input_ids.to(device)
+            target_ids = target_ids.to(device)
+
+            # 1. 원본 데이터 보존
+            raw_input_ids = input_ids
+            raw_len = raw_input_ids.shape[1]
+            
+            # [수정 1] Attention Mask 초기화 (원본 데이터 부분은 1로 설정)
+            attention_mask = torch.ones_like(input_ids, device=device)
+            
+            # [수정 핵심] 32가 아니라 128의 배수로 맞춤
+            required_alignment = max(int(args.block_size_q), 128)
+            
+            remainder = raw_len % required_alignment
+            pad_len = 0
+            
+            # print(f"[DEBUG] Raw Len: {raw_len}, Alignment: {required_alignment}, Remainder: {remainder}")
+
+            if remainder != 0:
+                pad_len = required_alignment - remainder
+                
+                # 패딩 토큰 결정
+                pad_val = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+                
+                # [Left Padding] for Input IDs
+                pad_tensor = torch.full(
+                    (raw_input_ids.shape[0], pad_len), 
+                    pad_val, 
+                    dtype=raw_input_ids.dtype, 
+                    device=device
+                )
+                input_ids = torch.cat([pad_tensor, raw_input_ids], dim=1)
+
+                # [수정 2] Attention Mask에도 Left Padding 적용 (패딩 부분은 0으로 설정)
+                # 모델이 앞부분의 패딩 토큰을 무시하도록 만들기 위함
+                pad_mask = torch.zeros(
+                    (raw_input_ids.shape[0], pad_len),
+                    dtype=attention_mask.dtype,
+                    device=device
+                )
+                attention_mask = torch.cat([pad_mask, attention_mask], dim=1)
+
+                print(f"[DEBUG] Padded Len: {input_ids.shape[1]} (Multiple of {required_alignment})")
+
+            # 2. 모델 생성
             with torch.no_grad(), torch.autocast("cuda", torch.bfloat16):
                 output = model.generate(
                     input_ids,
-                    max_new_tokens=20,
-                    min_new_tokens=5,
+                    attention_mask=attention_mask,  # [수정 3] 생성된 마스크 전달 (기존 None 제거)
+                    max_new_tokens=len(target_ids[0]),
+                    min_new_tokens=1,
                     do_sample=False,
                     num_beams=1,
-                    attention_mask=None,
-                    # pad_token_id=tokenizer.eos_token_id,
+                    # attention_mask=None,  # [수정] 기존 코드 주석 처리됨
+                    pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id,
+                    use_cache=True,
                 )
+
                 for m in model.modules():
                     if hasattr(m, "_clean_cache"):
                         m._clean_cache()
+
+                # 3. 결과 보정 (패딩 제거)
                 output = output[:, input_ids.shape[1] :]
+                
                 tqdm.write(f"{tokenizer.batch_decode(output)}")
+
+            # 4. 원본 input_ids 복구 (정확도 계산을 위해)
+            input_ids = raw_input_ids
+        ################################################################################
 
         # tqdm(tokenizer.batch_decode(output))
         truth = tokenizer.batch_decode(target_ids)
