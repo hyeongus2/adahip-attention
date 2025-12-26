@@ -1,29 +1,11 @@
-<p float="center">
-  <img src="docs/demo_infinite.gif" width="49%" />
-  <img src="docs/demo_vllm.gif" width="49%" />
-</p>
-
-:sunglasses: **HiP Attention** could extend the model context length training-free and can serve 3 million tokens with a single L40S 48GB GPU while achieving a 7.24 estimated speedup.
-
-| [**Paper (Arxiv, InfiniteHiP *latest*)**](https://arxiv.org/abs/2502.08910) | [**Paper (ICLR 2025)**](https://openreview.net/forum?id=PTcMzQgKmn) | [**SGlang Integration**](https://github.com/DeepAuto-AI/sglang) |
+:sunglasses: **AdaHiP Attention** could extend the model context length training-free and can serve 3 million tokens with a single L40S 48GB GPU while achieving a 7.24 estimated speedup.
 
 > [!NOTE]
-> You can try it in our [Playground in DeepAuto.ai](https://app.deepauto.ai)!
 
 > [!IMPORTANT]
 > This is **NOT yet free for commercial use**. The license is [FSL-1.1-MIT](https://fsl.software/), which is free for non-commercial use but will automatically convert to MIT license two years after each release. Please refer to the [LICENSE](./LICENSE) for more details.
 
 ## News
-
-- 2025.01.26: Version 1.2 is now ready! The preprint is now prepared in [arxiv](https://arxiv.org/abs/2502.08910).
-- 2025.01.22: HiP Attention is **accepted in ICLR 2025**!
-<details>
-<summary>... More News ...</summary>
-
-- 2025.01.03: Version 1.2 will be released soon. The new version fully supports context extension and better controls pruning hierarchy. It will also have better SGlang support (with proper KV offloading!)
-- 2024.10.05: Version 1.1 is now ready, check `ainl-hip-offload`. KV offloading feature in under alpha state.
-- 2024.09.09: Version 1.1 will be released soon. Please refer to the `ainl-hip-attention2` branch for a preview. It will reduce the latency further and improve the accuracy (and this will fix most of the internal bugs of v1.0). It offers many more experimental options for further research (e.g., key access logs, modular design of masking kernel). As discussed in the Appendix, this release will actually have (hopefully) a KV offloading feature, either UVM or a custom cache management algorithm. Also, SGLang will be supported by this release. Please take a look at our company's fork for a preview.
-</details>
 
 ## Usage
 
@@ -84,8 +66,8 @@ Please follow the documentation to install [uv](https://docs.astral.sh/uv/gettin
 
 ```bash
 # Clone this repository
-git clone git@github.com:DeepAuto-AI/hip-attention.git
-cd hip-attention
+git clone git@github.com:hyeongus2/adahip-attention.git
+cd adahip-attention
 
 # This install all research dev dependencies in .venv/
 uv sync --no-dev  # Install base dependencies first
@@ -102,8 +84,8 @@ Then you can run any python program with `uv run`. `uv run` automatically picks 
 
 ```bash
 # Clone this repository
-git clone git@github.com:DeepAuto-AI/hip-attention.git
-cd hip-attention
+git clone git@github.com:hyeongus2/adahip-attention.git
+cd adahip-attention
 
 # Make new conda environment
 conda create --name hip python=3.11
