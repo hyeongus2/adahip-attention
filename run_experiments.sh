@@ -23,7 +23,7 @@ MODEL="${MODEL:-llama3.1_8b_instruct}"
 # - Space-separated list
 # - Executed in order
 # - Example: "fa2 hip adahip"
-METHODS="${METHODS:-fa2 hip adahip}"
+METHODS="${METHODS:-adahip}"
 
 # JOBS:
 # - ppl, passkey, stream
@@ -34,22 +34,34 @@ JOBS="${JOBS:-ppl}"
 # ------------------------------------------------------------
 # DATASETS_PPL:
 # - wikitext / pg19
-DATASETS_PPL=(${DATASETS_PPL:-wikitext pg19})
+DATASETS_PPL=(${DATASETS_PPL:-pg19})
 
 # STRIDES:
 # - Context window stride for evaluation
-# 4096, 8192, 16384, 32768, 65536, 131072
-STRIDES=(${STRIDES:-4096 8192 16384 32768 65536 131072})
+# 32768, 65536, 131072
+STRIDES=(${STRIDES:-65536})
 
 # KS:
 # - Attention budget (meaningful for hip/adahip)
-# 64, 128, 256, 512, 1024, 2048
-KS=(${KS:-256 512 1024 2048})
+# 256, 512, 1024
+KS=(${KS:-512})
 
 # COUNT:
 # - Number of evaluation segments
 # - -1 means "use full available segments"
 COUNT="${COUNT:--1}"
+
+COUNT_RAW="${COUNT}"
+# [MOD] Dataset-specific base count policy when COUNT_RAW = -1.
+# We will scale counts by stride so that evaluation "token budget" stays proportional:
+#   COUNT = base_count(dataset) * (BASE_STRIDE / stride)
+BASE_STRIDE="${BASE_STRIDE:-131072}"           # 128k reference stride
+
+WIKITEXT_BASE_COUNT="${WIKITEXT_BASE_COUNT:-2}"  # observed: COUNT=-1 at 128k ~= 2 steps
+PG19_BASE_COUNT="${PG19_BASE_COUNT:-10}"         # set smaller than full (e.g., 10~30) to fit runtime
+
+MIN_COUNT="${MIN_COUNT:-1}"
+MAX_COUNT="${MAX_COUNT:-100000}"               # optional hard cap (e.g., 200)
 
 # BATCH_SIZE:
 # - Usually kept at 1 for long-context PPL stability
@@ -73,8 +85,8 @@ DENSE_LAYERS="${DENSE_LAYERS:-3}"
 # - Entropy sensitivity coefficient
 # POWERS:
 # - Nonlinear shaping of entropy -> k mapping
-ALPHAS_STR="${ALPHAS:-0.75 1.0 1.25}"
-POWERS_STR="${POWERS:-0.5 1.0 2.0}"
+ALPHAS_STR="${ALPHAS:-1.0}"
+POWERS_STR="${POWERS:-2.0}"
 
 read -r -a ALPHAS_ARR <<< "${ALPHAS_STR}"
 read -r -a POWERS_ARR <<< "${POWERS_STR}"
@@ -94,6 +106,45 @@ mkdir -p "${LOG_DIR}" "${SUMMARY_DIR}"
 # ------------------------------------------------------------
 # Utility helpers
 # ------------------------------------------------------------
+
+# [MOD] Compute effective COUNT for a given dataset and stride.
+# - If COUNT_RAW != -1: use COUNT_RAW as a fixed count.
+# - If COUNT_RAW == -1:
+#     * wikitext: use WIKITEXT_BASE_COUNT at BASE_STRIDE and scale by stride
+#     * pg19:     use PG19_BASE_COUNT at BASE_STRIDE and scale by stride
+effective_count() {
+  local dataset="$1"
+  local stride="$2"
+
+  # Honor explicit COUNT when COUNT_RAW is not -1
+  if [[ "${COUNT_RAW}" != "-1" ]]; then
+    echo "${COUNT_RAW}"
+    return
+  fi
+
+  local base_count="-1"
+  case "${dataset}" in
+    wikitext) base_count="${WIKITEXT_BASE_COUNT}" ;;
+    pg19)     base_count="${PG19_BASE_COUNT}" ;;
+    *)        base_count="-1" ;;  # unknown dataset: fallback to full behavior
+  esac
+
+  # If base_count is -1, keep "full evaluation" semantics
+  if [[ "${base_count}" == "-1" ]]; then
+    echo "-1"
+    return
+  fi
+
+  # Scale count inversely with stride (assumes stride divides BASE_STRIDE cleanly)
+  local c=$(( base_count * BASE_STRIDE / stride ))
+
+  if (( c < MIN_COUNT )); then c="${MIN_COUNT}"; fi
+  if (( c > MAX_COUNT )); then c="${MAX_COUNT}"; fi
+  echo "${c}"
+}
+
+
+
 ts() { date +"%Y%m%d_%H%M%S"; }
 
 have_job() {
@@ -193,6 +244,9 @@ for method in ${METHODS}; do
     for dataset in "${DATASETS_PPL[@]}"; do
       for stride in "${STRIDES[@]}"; do
 
+        # [MOD] Update COUNT per dataset/stride without touching the run command lines.
+        COUNT="$(effective_count "${dataset}" "${stride}")"
+
         if is_fa2 "${method}"; then
           tag="ppl_${dataset}_${method}_${MODEL}_s${stride}_$(ts)"
           run_and_log "${tag}" \
@@ -236,6 +290,9 @@ for method in ${METHODS}; do
                 --k "${k}"
           done
         fi
+
+        # [MOD] Restore COUNT to the raw policy value after each stride iteration.
+        COUNT="${COUNT_RAW}"
 
       done
     done
