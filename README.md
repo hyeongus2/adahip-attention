@@ -170,7 +170,5 @@ Full paper available here:
 
 Hyeonseong Sim  
 KAIST School of Electrical Engineering  
-Email:
-- hyeongus2@gmail.com
-- hyeongus2@kaist.ac.kr
+Email: hyeongus2@gmail.com / hyeongus2@kaist.ac.kr
 GitHub: https://github.com/hyeongus2
