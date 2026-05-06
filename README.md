@@ -1,242 +1,55 @@
-:sunglasses: **AdaHiP Attention** could extend the model context length training-free and can serve 3 million tokens with a single L40S 48GB GPU while achieving a 7.24 estimated speedup.
+# AdaHiP Attention (Adaptive Hierarchically Pruned Attention)
 
-> [!NOTE]
+> This repository contains an experimental extension of HiP Attention,
+> implementing AdaHiP proposed in my research.
 
-> [!IMPORTANT]
-> This is **NOT yet free for commercial use**. The license is [FSL-1.1-MIT](https://fsl.software/), which is free for non-commercial use but will automatically convert to MIT license two years after each release. Please refer to the [LICENSE](./LICENSE) for more details.
+## Overview
 
-## News
+AdaHiP (Adaptive Hierarchically Pruned Attention) improves HiP by dynamically adjusting
+the retrieval budget k based on attention entropy.
 
-## Usage
+While HiP uses a fixed k for all queries, AdaHiP allocates computation adaptively:
 
-[`hip-attn` package is available on PyPI](https://pypi.org/project/hip-attn/):
+- Low-entropy queries → small k (reduce compute)
+- High-entropy queries → large k (preserve accuracy)
 
-```bash
-pip install hip-attn
-```
+This enables a better trade-off between perplexity and speed in long-context inference.
 
-or using uv:
+## Key Idea
 
-```bash
-uv add hip-attn
-```
+AdaHiP estimates normalized attention entropy H(q) and computes:
 
-After installation, you can access the `hip` package from any project. `hip` is the code name of HiP attention.
+k_dyn = RoundUpTo64(k_min + (k_max - k_min) * x)
 
-```py
-import torch
-from hip_attn import hip_attention_12, HiPAttentionArgs12
+where:
+- x = (alpha * H(q))^p
+- k_min = max(64, k_base / 4)
+- k_max = 2 * k_base
 
-device = 'cuda'
+## Why AdaHiP?
 
-batch_size = 1
-kv_len = 128 * 1024
-q_len = 32 * 1024
-num_heads = 32
-num_kv_heads = 8
-head_dims = 128
-dtype = torch.bfloat16
+HiP suffers from a static sparsity problem:
 
-q = torch.randn(
-    (batch_size, q_len, num_heads, head_dims),
-    dtype=dtype,
-    device=device
-)
-k = torch.randn(
-    (batch_size, kv_len, num_kv_heads, head_dims),
-    dtype=dtype,
-    device=device,
-)
-v = k.clone()
+- Fixed k is too large for simple queries → wasted compute
+- Fixed k is too small for complex queries → important tokens are missed
 
-output, metadata = hip_attention_12(q=q, k=k, v=v, args=HiPAttentionArgs12())
-print(output.shape)
+AdaHiP solves this by adapting k based on query complexity.
 
-# > torch.Size([1, 32768, 32, 128])
-```
+## Experimental Results
+
+| Method | PPL ↓ | Speedup ↑ |
+|--------|------|----------|
+| FA2    | 12.30 | 1.00x |
+| HiP    | 12.63 | 2.18x |
+| AdaHiP | 12.46 | 2.08x |
+
+AdaHiP improves perplexity compared to static HiP,
+while maintaining sub-quadratic efficiency.
 
 ## Getting Started
 
-### Local development
-
-#### Using uv (Recommended)
-
-It’s recommended to use [uv](https://docs.astral.sh/uv/), a very fast Python environment manager, to create and manage Python environments.
-Please follow the documentation to install [uv](https://docs.astral.sh/uv/getting-started/installation/). After installing uv, you can create a new Python environment and install hip-attention using the following commands:
+Follow the original HiP setup instructions:
 
 ```bash
-# Clone this repository
-git clone git@github.com:hyeongus2/adahip-attention.git
+git clone https://github.com/hyeongus2/adahip-attention.git
 cd adahip-attention
-
-# This install all research dev dependencies in .venv/
-uv sync --no-dev  # Install base dependencies first
-uv sync  # Then install all dependencies including no-build-isolation packages (e.g., flash-attn)
-uv run pre-commit install
-```
-
-Then you can run any python program with `uv run`. `uv run` automatically picks up .venv/ virtual environment:
-
-- Script: `uv run src/hip_research/main/model_eval.py`
-- Module: `uv run -m src.hip_research.main.model_eval`
-
-#### Using pip and conda
-
-```bash
-# Clone this repository
-git clone git@github.com:hyeongus2/adahip-attention.git
-cd adahip-attention
-
-# Make new conda environment
-conda create --name hip python=3.11
-conda activate hip
-
-# Default install
-pip install -e "."
-# (Optional) For research benchmarks and unit tests
-pip install -e "hip-research"
-
-# Optional, depends on your CUDA environment
-export CUDACXX=/usr/local/cuda/bin/nvcc
-
-# Install SGLang with support for HiP Attention
-pip install -e ".[sglang]" \
-"sglang[all] @ git+https://github.com/DeepAuto-AI/sglang.git@deepauto/release#subdirectory=python" \
---no-build-isolation \
---verbose \
---find-links https://flashinfer.ai/whl/cu124/torch2.5/flashinfer-python
-```
-
-### Docker
-
-Docker images `deepauto/hip-attention` are available on [Docker Hub](https://hub.docker.com/r/deepauto/hip-attention).
-Docker examples are available in [Running section](#running).
-
-### Running
-
-See the following pages for more details:
-
-- [Running OpenAI API server examples (SGlang)](docs/USAGE.sglang.md)
-
-### Docker Compose
-
-Docker compose examples are available in [`docker-compose`](/docker-compose) folder.
-
-```bash
-# First copy .env.example to .env
-cp .env.example .env
-vim .env
-
-# Start sglang server
-docker compose \
---env-file .env \
--f docker-compose/sglang-server.yaml \
---project-name hip-attention-sglang-server-local \
-up
-
-# Start sglang router
-docker compose \
--f docker-compose/sglang-router.yaml \
---project-name hip-attention-sglang-router-local \
-up
-```
-
-## Experiment Reproduce
-
-Check [how to reproduce experiment](docs/REPRODUCE.md) page
-
-## Citation
-
-```bibtex
-@misc{willette2025_delta_attention,
-      title={Delta Attention: Fast and Accurate Sparse Attention Inference by Delta Correction},
-      author={Jeffrey Willette and Heejun Lee and Sung Ju Hwang},
-      year={2025},
-      eprint={2505.11254},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2505.11254},
-}
-
-@misc{lee2025_infinite_hip,
-      title={InfiniteHiP: Extending Language Model Context Up to 3 Million Tokens on a Single GPU},
-      author={Heejun Lee and Geon Park and Jaduk Suh and Sung Ju Hwang},
-      year={2025},
-      eprint={2502.08910},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2502.08910},
-}
-
-@inproceedings{lee2025_hip_attention,
-      title={A Training-Free Sub-quadratic Cost Transformer Model Serving Framework with Hierarchically Pruned Attention},
-      author={Heejun Lee and Geon Park and Youngwan Lee and Jaduk Suh and Jina Kim and Wonyong Jeong and Bumsik Kim and Hyemin Lee and Myeongjae Jeon and Sung Ju Hwang},
-      booktitle={The Thirteenth International Conference on Learning Representations},
-      year={2025},
-      url={https://openreview.net/forum?id=PTcMzQgKmn}
-}
-```
-
-## Contributing
-
-### Updating dependencies
-
-```bash
-# This will update git commit hash of sglang
-uv lock --upgrade-package sglang
-uv sync
-```
-
-### Building and publishing
-
-- PyPI
-
-```bash
-rm -rf dist
-uv build --no-sources
-uv publish
-```
-
-- Docker
-
-```bash
-git clone git@github.com:DeepAuto-AI/hip-attention.git
-cd hip-attention
-docker login
-
-tag_git_short=$(git rev-parse --short HEAD)-sglang
-tag_hip_attention_sglang=v$(uv run python -c 'import importlib.metadata; print(importlib.metadata.version("hip-attn"))')-sglang
-
-# Build sglang server image
-docker build . \
--f Dockerfile.sglang \
--t deepauto/hip-attention:latest \
--t deepauto/hip-attention:latest-sglang \
--t deepauto/hip-attention:${tag_git_short} \
--t deepauto/hip-attention:${tag_hip_attention_sglang}
-
-# Publish sglang server image
-docker push deepauto/hip-attention:latest
-docker push deepauto/hip-attention:latest-sglang
-docker push deepauto/hip-attention:${tag_git_short}
-docker push deepauto/hip-attention:${tag_hip_attention_sglang}
-
-# Build sglang router image
-cd ../sglang
-
-docker build . \
--f docker/Dockerfile.router \
---no-cache \
--t deepauto/sglang-router:latest \
--t deepauto/sglang-router:latest-sglang \
--t deepauto/sglang-router:${tag_git_short} \
--t deepauto/sglang-router:${tag_hip_attention_sglang}
-
-# Publish sglang router image
-docker push deepauto/sglang-router:latest
-docker push deepauto/sglang-router:latest-sglang
-docker push deepauto/sglang-router:${tag_git_short}
-docker push deepauto/sglang-router:${tag_hip_attention_sglang}
-
-cd -
-```
