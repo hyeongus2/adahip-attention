@@ -34,6 +34,12 @@ based on query-level informational density.
 
 ---
 
+## Conceptual Illustration
+
+![AdaHiP vs HiP](images/figure1.jpg)
+
+---
+
 ## Key Idea
 
 AdaHiP estimates normalized attention entropy H(q) and computes:
@@ -149,6 +155,14 @@ This work builds upon:
 ## License
 
 This repository follows the original HiP Attention license.
+
+---
+
+## Paper
+
+Full paper available here:
+
+[📄 AdaHiP Paper (PDF)](./AdaHiP_Hyeonseong_Sim.pdf)
 
 ---
 
