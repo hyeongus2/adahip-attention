@@ -50,10 +50,10 @@ CPU PyTorch 환경에서는 CUDA kernel을 불러오지 않고 다음 합성 회
 python -m unittest discover -s tests -p "test_adahip_cpu.py" -v
 ```
 
-검증 범위는 causal 미래 key 차단, prefix 정규화, GQA head 등가성, decode·짧은 probe, token 가중 PPL과 집계입니다. 실제 sparse kernel 정확도, native GQA GPU 통합, 장문 PPL·latency·메모리는 재검증하지 않았습니다. probe는 padding 없는 연속 causal sequence를 전제로 합니다.
+검증 범위는 causal 미래 key 차단, prefix 정규화, GQA head 등가성, decode·짧은 probe, token 가중 PPL과 집계입니다. 실제 sparse kernel 정확도, native GQA GPU 통합, 장문 PPL·latency·메모리는 재검증하지 않았습니다. probe는 padding 없는 연속 causal sequence를 전제로 합니다. 또한 한 layer의 여러 query에서 얻은 값을 하나의 예산으로 평균하므로, prefill 전체의 예산 선택이 엄밀한 autoregressive causality를 만족한다고 검증한 것은 아닙니다. 이 구조의 개선과 kernel 검증 전에는 PPL을 모델 품질의 확정 근거로 사용하지 않습니다.
 
 **기존 README·학위논문의 성능표와 속도 우위 주장은 철회했습니다.** 원래 논문과 표는 과거 이력 자료이며 현재 검증 결과로 인용하지 않습니다. 수정 코드로 공통 조건의 원시 로그·환경·모델/데이터 revision을 보존한 재실험 후 성능을 다시 보고할 예정입니다.
 
 ## 출처와 라이선스
 
-원 [HiP Attention](https://github.com/DeepAuto-AI/hip-attention) 연구와 저작자 고지를 유지합니다. 사용·재배포 조건은 저장소의 [LICENSE.md](LICENSE.md)를 확인하세요. fork의 전체 코드를 새 MIT 라이선스로 바꾸지 않습니다.
+원 [HiP Attention](https://github.com/DeepAuto-AI/hip-attention) 연구와 저작자 고지를 유지합니다. 사용·재배포 조건은 저장소의 [LICENSE.md](LICENSE.md)를 확인하세요. 상속한 코드에는 원 라이선스와 저작자 고지가 그대로 적용됩니다.
