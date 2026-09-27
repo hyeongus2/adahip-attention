@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +68,7 @@ class RunRow:
     ppl_mean: float
     latency_mean_sec: float
     speedup: Optional[float] = None
+    model: str = ""
 
 
 def parse_summary_file(path: Path) -> Optional[RunRow]:
@@ -88,9 +90,15 @@ def parse_summary_file(path: Path) -> Optional[RunRow]:
 
     ppl_list: list[float] = []
     sec_list: list[float] = []
+    metric = None
 
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
+        if line.startswith("METRIC_JSON: "):
+            try:
+                metric = json.loads(line[len("METRIC_JSON: "):])
+            except json.JSONDecodeError:
+                return None
         sm = STEP_RE.match(line)
         if not sm:
             continue
@@ -108,6 +116,19 @@ def parse_summary_file(path: Path) -> Optional[RunRow]:
     if not ppl_list or not sec_list or len(ppl_list) != len(sec_list):
         return None
 
+    # Old summaries averaged cumulative step PPL; do not silently reuse them.
+    if not metric or metric.get("metric_version") != "token_weighted_v1":
+        return None
+    try:
+        count, total_nll = int(metric["valid_tokens"]), float(metric["total_nll"])
+        if count <= 0 or not math.isfinite(total_nll):
+            return None
+        final_ppl = math.exp(total_nll / count)
+        if not math.isfinite(final_ppl):
+            return None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
     return RunRow(
         dataset=dataset,
         method=method,
@@ -115,9 +136,10 @@ def parse_summary_file(path: Path) -> Optional[RunRow]:
         k=k,
         alpha=alpha,
         power=power,
-        ppl_mean=mean(ppl_list),
+        ppl_mean=final_ppl,  # Legacy CSV column name; value is corpus PPL.
         latency_mean_sec=mean(sec_list),
         speedup=None,
+        model=m.group("model"),
     )
 
 
@@ -157,13 +179,13 @@ def compute_speedup(rows: list[RunRow]) -> None:
     fa2 speedup becomes 1.0 (since baseline == its own latency, assuming only one fa2 run).
     """
     # Collect baseline latencies per (dataset, stride)
-    baselines: dict[tuple[str, int], float] = {}
-    fa2_lat_list: dict[tuple[str, int], list[float]] = {}
+    baselines: dict[tuple[str, int, str], float] = {}
+    fa2_lat_list: dict[tuple[str, int, str], list[float]] = {}
 
     for r in rows:
         if r.method != "fa2":
             continue
-        key = (r.dataset, r.stride)
+        key = (r.dataset, r.stride, r.model)
         fa2_lat_list.setdefault(key, []).append(r.latency_mean_sec)
 
     for key, vals in fa2_lat_list.items():
@@ -172,7 +194,7 @@ def compute_speedup(rows: list[RunRow]) -> None:
 
     # Assign speedup
     for r in rows:
-        key = (r.dataset, r.stride)
+        key = (r.dataset, r.stride, r.model)
         base = baselines.get(key)
         if base is None or r.latency_mean_sec <= 0:
             r.speedup = None
@@ -236,6 +258,9 @@ def main() -> None:
             skipped.append(fp.name)
             continue
         all_rows.append(row)
+
+    if not all_rows:
+        raise SystemExit("No token_weighted_v1 summaries found; rerun evaluation with the current code.")
 
     # Compute speedup before sorting/writing
     compute_speedup(all_rows)

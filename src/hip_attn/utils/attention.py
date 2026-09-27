@@ -15,36 +15,7 @@ def _round_up_to_64(x: int) -> int:
     """Ensure k is a multiple of 64 for HiP kernels."""
     return ((x + 63) // 64) * 64
 
-@torch.no_grad()
-def _estimate_entropy_norm(q, k, probe_q=128, probe_k=1024):
-    """
-    Estimate attention entropy to determine dynamic k.
-    """
-    N, Tq, Hq, D = q.shape
-    _, Tk, Hk, _ = k.shape
-
-    Q = min(int(probe_q), int(Tq))
-    P = min(int(probe_k), int(Tk))
-
-    if Q <= 0 or P <= 1:
-        return 0.0
-
-    # Probe latest tokens
-    curr_q = q[:, -Q:].to(torch.float32)
-    curr_k = k[:, -P:].to(torch.float32)
-
-    # GQA Handling
-    if Hq != Hk:
-        curr_k = curr_k.repeat_interleave(Hq // Hk, dim=2)
-
-    # Compute local attention entropy
-    logits = torch.einsum("nqhd,nphd->nqhp", curr_q, curr_k)
-    probs = torch.softmax(logits, dim=-1)
-    ent = -(probs * (probs + 1e-8).log()).sum(dim=-1)
-
-    # Normalize by max possible entropy (log P)
-    ent_norm = ent / (math.log(P) + 1e-8)
-    return float(ent_norm.mean().item())
+from hip_attn.utils.entropy_probe import estimate_entropy_norm as _estimate_entropy_norm
 
 # =========================================================================
 # Main Attention Function

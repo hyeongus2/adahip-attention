@@ -94,7 +94,9 @@ read -r -a POWERS_ARR <<< "${POWERS_STR}"
 # ------------------------------------------------------------
 # Result directories
 # ------------------------------------------------------------
-ROOT_DIR="${ROOT_DIR:-/work}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${ROOT_DIR:-${SCRIPT_DIR}}"
+cd "${ROOT_DIR}"
 RESULTS_ROOT="${ROOT_DIR}/results"
 
 # [MOD] Separate directories for logs and summaries
@@ -189,6 +191,7 @@ make_summary() {
     tr '\r' '\n' < "${logfile}" \
       | grep -oE 'step[[:space:]]+[0-9]+[[:space:]]+PPL:[^[:cntrl:]]*sec' \
       || true
+    grep '^METRIC_JSON: ' "${logfile}" || true
     echo "------------------------------------------------------------"
     echo "[${tag}] DONE $(date -Is)"
   } > "${summaryfile}"

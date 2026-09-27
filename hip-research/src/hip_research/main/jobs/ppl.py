@@ -9,6 +9,7 @@ import torch
 import transformers
 from datasets import load_dataset
 from tqdm import tqdm
+from hip_research.utils.ppl_metrics import PerplexityAccumulator
 
 
 def safe_name(txt: str):
@@ -87,25 +88,35 @@ def job_ppl(
     topk_nlls = torch.tensor([], dtype=torch.float)
     lowk_nlls = torch.tensor([], dtype=torch.float)
     nlls = []
+    metric = PerplexityAccumulator()
+    if args.count == 0 or args.count < -1:
+        raise ValueError("count must be positive or -1 for all segments")
+    segment_starts = range(0, seq_len, stride)
+    if args.count != -1:
+        segment_starts = segment_starts[:args.count]
     prev_end_loc = 0
     t = time.time()
     with tqdm(
-        range(0, seq_len, stride)[: args.count], dynamic_ncols=True, leave=not quite
+        segment_starts, dynamic_ncols=True, leave=not quite
     ) as pbar:
         for begin_loc in pbar:
             end_loc = min(begin_loc + max_length, seq_len)
             trg_len = (
                 end_loc - prev_end_loc
             )  # may be different from stride on last loop
-            input_ids = encodings[:, begin_loc:end_loc].to(device)
+            input_ids = encodings[:, begin_loc:end_loc].to(device).clone()
             if tokenizer.bos_token_id is not None:
                 input_ids[:, 0] = tokenizer.bos_token_id
             target_ids = input_ids.clone()
             target_ids[:, :-trg_len] = -100
+            valid_tokens = int((target_ids[..., 1:] != -100).sum().item())
+            if valid_tokens == 0:
+                continue
 
             with torch.no_grad():
 
                 if isinstance(model, LLM):
+                    raise NotImplementedError("Token-weighted PPL currently supports the Transformers path only")
                     sampling_params = SamplingParams(
                         max_tokens=1,
                         ignore_eos=True,
@@ -235,13 +246,14 @@ def job_ppl(
                                         m._clean_cache()
                     if len(samples) > 1:
                         print([f"{x.item():.5f}" for x in samples])
-                    neg_log_likelihood = min(samples)
+                    neg_log_likelihood = torch.stack(samples).mean()
 
             nlls.append(neg_log_likelihood.cpu())
+            metric.add(neg_log_likelihood.item(), valid_tokens)
 
             prev_end_loc = end_loc
 
-            ppl = torch.exp(torch.stack(nlls).mean()).item()
+            ppl = metric.result()["ppl"]
             ppl_worst = torch.exp(topk_nlls.mean()).item()
             ppl_best = torch.exp(lowk_nlls.mean()).item()
             if not quite:
@@ -254,11 +266,12 @@ def job_ppl(
             if end_loc == seq_len:
                 break
 
-    ppl = torch.exp(torch.stack(nlls).mean()).item()
+    ppl = metric.result()["ppl"]
 
     os.makedirs("./cache/llama_eval/", exist_ok=True)
     with open(outfile, "w") as f:
-        json.dump({"ppl": ppl}, f)
+        json.dump(metric.result(), f)
+    print("METRIC_JSON: " + json.dumps(metric.result(), sort_keys=True))
 
     # if not quite:
     print(f"PPL: {ppl:.4f}")

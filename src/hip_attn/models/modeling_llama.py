@@ -633,7 +633,7 @@ class LlamaCustomAttention(LlamaAttention):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
-        if self.attention_method in ["hip", "skewed"]:
+        if self.attention_method in ["hip", "adahip", "skewed"]:
             force_extend = os.getenv("HIP_EXTEND", "1") == "1"
             need_apply_rope = force_extend
             model_context_length = 131072
@@ -730,7 +730,7 @@ class LlamaCustomAttention(LlamaAttention):
                 )
 
         # NOTE: HiP, FA2 supports GQA, MQA natively.
-        if self.attention_method not in ["hip", "fa2", "none", "skewed"]:
+        if self.attention_method not in ["hip", "adahip", "fa2", "none", "skewed"]:
             key_states = repeat_kv(key_states, self.num_key_value_groups)
             value_states = repeat_kv(value_states, self.num_key_value_groups)
 
